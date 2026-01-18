@@ -8,7 +8,8 @@ WORKDIR /app
 
 # 复制 package 文件
 COPY package.json package-lock.json* ./
-RUN npm ci
+# 如果有 package-lock.json 使用 npm ci，否则使用 npm install
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # 构建阶段
 FROM base AS builder
