@@ -1,0 +1,12 @@
+{
+  "name": "lego-price-king-scripts",
+  "version": "1.0.0",
+  "description": "本地同步脚本依赖",
+  "private": true,
+  "dependencies": {
+    "@prisma/client": "^5.7.1",
+    "ali-oss": "^6.20.0",
+    "dotenv": "^16.3.1",
+    "xlsx": "^0.18.5"
+  }
+}

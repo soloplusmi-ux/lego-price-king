@@ -1,0 +1,26 @@
+// Prisma Schema for 乐高比价王
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model LegoSet {
+  setNumber    String   @id // 编号 (Primary Key)
+  name         String   // 名称
+  imageUrl     String   // 图片链接 (Aliyun OSS URL)
+  theme        String   // 主题
+  subTheme     String?  // 子主题
+  year         Int      // 年份
+  minifigs     Int?     // 人仔数
+  lastPrice    Float?   // 最近一次的中位数价格
+  priceHistory Json?    // 历史价格数据 [{date, price}, ...]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("lego_sets")
+}

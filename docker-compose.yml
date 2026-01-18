@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: lego_price_king_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lego_price_king
+    ports:
+      # 暴露端口以便本地脚本连接
+      - "5432:5432"
+    volumes:
+      # 持久化数据卷
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lego_network
+    restart: unless-stopped
+
+  # Next.js 应用
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lego_price_king_app
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/lego_price_king?schema=public"
+      NODE_ENV: production
+      # 从 .env 文件读取其他配置
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lego_network
+    restart: unless-stopped
+    command: sh -c "npx prisma generate && npm start"
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  lego_network:
+    driver: bridge
