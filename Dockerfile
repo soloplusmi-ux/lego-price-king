@@ -3,7 +3,9 @@ FROM node:18-alpine AS base
 
 # 安装依赖阶段
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
+# 配置 Alpine 镜像源（使用阿里云镜像，解决网络问题）
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
+    apk add --no-cache libc6-compat
 WORKDIR /app
 
 # 复制 package 文件
