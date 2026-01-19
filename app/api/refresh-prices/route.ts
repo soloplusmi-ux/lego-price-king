@@ -128,10 +128,23 @@ export async function POST(request: NextRequest) {
 
     // 更新数据库
     const currentDate = new Date().toISOString().split('T')[0];
-    const priceHistory: PriceHistoryPoint[] = 
-      (legoSet.priceHistory && typeof legoSet.priceHistory === 'object' && Array.isArray(legoSet.priceHistory))
-        ? legoSet.priceHistory as PriceHistoryPoint[]
-        : [];
+    
+    // 安全地转换 priceHistory
+    let priceHistory: PriceHistoryPoint[] = [];
+    if (legoSet.priceHistory && typeof legoSet.priceHistory === 'object' && Array.isArray(legoSet.priceHistory)) {
+      // 验证并转换每个元素
+      priceHistory = legoSet.priceHistory
+        .filter((item: any): item is PriceHistoryPoint => 
+          item && 
+          typeof item === 'object' && 
+          typeof item.date === 'string' && 
+          typeof item.price === 'number'
+        )
+        .map((item: any) => ({
+          date: String(item.date),
+          price: Number(item.price),
+        }));
+    }
 
     // 添加新的价格点
     priceHistory.push({

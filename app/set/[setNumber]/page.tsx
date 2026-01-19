@@ -36,10 +36,21 @@ export default async function SetDetailPage({
     notFound();
   }
 
-  const priceHistory: PriceHistoryPoint[] = 
-    set.priceHistory && typeof set.priceHistory === 'object'
-      ? (Array.isArray(set.priceHistory) ? set.priceHistory : [])
-      : [];
+  // 安全地转换 priceHistory
+  let priceHistory: PriceHistoryPoint[] = [];
+  if (set.priceHistory && typeof set.priceHistory === 'object' && Array.isArray(set.priceHistory)) {
+    priceHistory = set.priceHistory
+      .filter((item: any): item is PriceHistoryPoint => 
+        item && 
+        typeof item === 'object' && 
+        typeof item.date === 'string' && 
+        typeof item.price === 'number'
+      )
+      .map((item: any) => ({
+        date: String(item.date),
+        price: Number(item.price),
+      }));
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
