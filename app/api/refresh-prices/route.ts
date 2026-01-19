@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { PriceHistoryPoint, parsePriceHistory } from '@/lib/priceHistory';
 
 const prisma = new PrismaClient();
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       where: { setNumber },
       data: {
         lastPrice: medianPrice,
-        priceHistory: priceHistory,
+        priceHistory: priceHistory as Prisma.InputJsonValue,
       },
     });
 
