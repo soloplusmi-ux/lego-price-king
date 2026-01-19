@@ -2,7 +2,7 @@
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-interface PriceHistoryPoint {
+export interface PriceHistoryPoint {
   date: string;
   price: number;
 }

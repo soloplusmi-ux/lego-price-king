@@ -1,44 +1,13 @@
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import PriceChart from '@/components/PriceChart';
 import StoreList from '@/components/StoreList';
 import RefreshPriceButton from '@/components/RefreshPriceButton';
+import { parsePriceHistory } from '@/lib/priceHistory';
 
 const prisma = new PrismaClient();
-
-interface PriceHistoryPoint {
-  date: string;
-  price: number;
-}
-
-/**
- * 安全地将 Prisma Json 类型转换为 PriceHistoryPoint[]
- */
-function parsePriceHistory(jsonValue: Prisma.JsonValue | null): PriceHistoryPoint[] {
-  if (!jsonValue || typeof jsonValue !== 'object' || !Array.isArray(jsonValue)) {
-    return [];
-  }
-  
-  const result: PriceHistoryPoint[] = [];
-  for (const item of jsonValue) {
-    if (
-      item &&
-      typeof item === 'object' &&
-      'date' in item &&
-      'price' in item &&
-      typeof item.date === 'string' &&
-      typeof item.price === 'number'
-    ) {
-      result.push({
-        date: String(item.date),
-        price: Number(item.price),
-      });
-    }
-  }
-  return result;
-}
 
 async function getLegoSet(setNumber: string) {
   const set = await prisma.legoSet.findUnique({
