@@ -17,6 +17,20 @@ const config = {
         "2xl": "1400px",
       },
     },
+    fontFamily: {
+      sans: [
+        '-apple-system',
+        'BlinkMacSystemFont',
+        '"Segoe UI"',
+        'Roboto',
+        '"Helvetica Neue"',
+        'Arial',
+        'sans-serif',
+        '"Apple Color Emoji"',
+        '"Segoe UI Emoji"',
+        '"Segoe UI Symbol"',
+      ],
+    },
     extend: {
       colors: {
         border: "hsl(var(--border))",
