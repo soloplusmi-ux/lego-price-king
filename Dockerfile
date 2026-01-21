@@ -50,14 +50,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modul
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 # 复制 Prisma Client 的完整目录（包括所有运行时文件）
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/client ./node_modules/@prisma/client
-# 确保 Prisma 运行时目录存在（如果上面的复制失败，这里会创建）
-RUN mkdir -p node_modules/@prisma/client/runtime || true
 
 # 安装 Prisma CLI 和 Client（确保运行时可用）
 RUN npm install -g prisma @prisma/client
 
 # 确保 nextjs 用户有权限访问所有文件
 RUN chown -R nextjs:nodejs /app
+
+# 在构建时重新生成 Prisma Client（确保运行时文件存在）
+RUN npx prisma generate || true
 
 USER nextjs
 
