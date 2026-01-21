@@ -53,6 +53,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/client ./nod
 # 确保 Prisma 运行时目录存在（如果上面的复制失败，这里会创建）
 RUN mkdir -p node_modules/@prisma/client/runtime || true
 
+# 安装 Prisma CLI 和 Client（确保运行时可用）
+RUN npm install -g prisma @prisma/client
+
 USER nextjs
 
 EXPOSE 3000
