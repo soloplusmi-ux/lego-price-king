@@ -45,11 +45,13 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# 复制完整的 Prisma 相关文件
+# 复制完整的 Prisma 相关文件（确保所有运行时文件都被复制）
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
-# 复制 Prisma Client 的完整运行时目录
+# 复制 Prisma Client 的完整目录（包括所有运行时文件）
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/client ./node_modules/@prisma/client
+# 确保 Prisma 运行时目录存在（如果上面的复制失败，这里会创建）
+RUN mkdir -p node_modules/@prisma/client/runtime || true
 
 USER nextjs
 
