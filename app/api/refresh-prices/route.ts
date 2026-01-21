@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       where: { setNumber },
       data: {
         lastPrice: medianPrice,
-        priceHistory: priceHistory as Prisma.InputJsonValue,
+        priceHistory: priceHistory as any,
       },
     });
 
