@@ -42,7 +42,7 @@ services:
     networks:
       - lego_network
     restart: unless-stopped
-    command: sh -c "cd /app && npm install prisma @prisma/client && npx prisma generate && node server.js"
+    command: sh -c "npx prisma generate && node server.js"
 
 volumes:
   postgres_data:

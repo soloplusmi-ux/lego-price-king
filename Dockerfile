@@ -56,6 +56,9 @@ RUN mkdir -p node_modules/@prisma/client/runtime || true
 # 安装 Prisma CLI 和 Client（确保运行时可用）
 RUN npm install -g prisma @prisma/client
 
+# 确保 nextjs 用户有权限访问所有文件
+RUN chown -R nextjs:nodejs /app
+
 USER nextjs
 
 EXPOSE 3000
