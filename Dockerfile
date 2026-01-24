@@ -33,6 +33,9 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
+# Prisma 需要 OpenSSL，按官方提示安装
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 # 复制必要的文件
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
