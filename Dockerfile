@@ -1,11 +1,8 @@
 # 使用 Node.js 18 LTS 作为基础镜像
-FROM node:18-alpine AS base
+FROM node:18-slim AS base
 
-# 安装依赖阶段
+# 安装依赖阶段（Prisma 在 Alpine 上易报 OpenSSL/引擎错，改用 Debian slim）
 FROM base AS deps
-# 配置 Alpine 镜像源（使用阿里云镜像，解决网络问题）
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk add --no-cache libc6-compat
 WORKDIR /app
 
 # 复制 package 文件
