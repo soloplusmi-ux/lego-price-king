@@ -72,21 +72,8 @@ function calculateMedian(prices: number[]): number {
 
 export async function POST(request: NextRequest) {
   try {
-    // 验证 API 密钥（可选，如果配置了则验证）
-    const authHeader = request.headers.get('authorization');
-    const apiKey = request.nextUrl.searchParams.get('key') || 
-                   authHeader?.replace('Bearer ', '') ||
-                   request.headers.get('x-api-key');
-
-    // 如果配置了 API_SECRET_KEY，则必须提供正确的密钥
-    if (process.env.API_SECRET_KEY) {
-      if (!apiKey || apiKey !== process.env.API_SECRET_KEY) {
-        return NextResponse.json(
-          { error: '未授权访问，请提供有效的 API 密钥' },
-          { status: 401 }
-        );
-      }
-    }
+    // 价格刷新接口：暂不校验 API 密钥，任意用户可点「更新价格」
+    // 若需保护，可后续在反向代理或中间件中加鉴权
 
     const setNumber = request.nextUrl.searchParams.get('setNumber');
     
