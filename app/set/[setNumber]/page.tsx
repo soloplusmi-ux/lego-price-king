@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import PriceChart from '@/components/PriceChart';
 import StoreList from '@/components/StoreList';
-import RefreshPriceButton from '@/components/RefreshPriceButton';
+import PriceSection from '@/components/PriceSection';
 import { parsePriceHistory } from '@/lib/priceHistory';
 
 const prisma = new PrismaClient();
@@ -63,6 +63,7 @@ export default async function SetDetailPage({
                   className="object-contain"
                   priority
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                  unoptimized={set.imageUrl.startsWith('/images/')}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-gray-400 text-base sm:text-lg">
@@ -117,21 +118,7 @@ export default async function SetDetailPage({
         {/* 价格信息区 */}
         <div className="bg-white rounded-lg shadow-md p-4 sm:p-6 mb-6">
           <div className="max-w-4xl mx-auto">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="flex-1">
-                <div className="text-xs sm:text-sm text-gray-500 mb-1">淘宝信价中位数</div>
-                {set.lastPrice !== null ? (
-                  <div className="text-2xl sm:text-3xl font-bold text-blue-600">
-                    ¥{set.lastPrice.toFixed(2)}
-                  </div>
-                ) : (
-                  <div className="text-base sm:text-lg text-gray-400">暂无价格数据</div>
-                )}
-              </div>
-              <div className="flex-shrink-0">
-                <RefreshPriceButton setNumber={set.setNumber} />
-              </div>
-            </div>
+            <PriceSection setNumber={set.setNumber} initialLastPrice={set.lastPrice} />
           </div>
         </div>
 

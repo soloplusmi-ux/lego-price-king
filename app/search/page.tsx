@@ -4,23 +4,29 @@ import Image from 'next/image';
 
 const prisma = new PrismaClient();
 
+// 避免搜索页被缓存，确保每次都查库
+export const dynamic = 'force-dynamic';
+
 interface SearchPageProps {
   searchParams: { q?: string };
 }
 
 async function getSearchResults(query: string) {
-  if (!query || query.trim() === '') {
-    return [];
+  const term = (query || '').trim();
+  if (term === '') {
+    // 无关键词时：返回最近录入的 24 条，便于确认有数据
+    return await prisma.legoSet.findMany({
+      take: 24,
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
-  const searchTerm = `%${query.trim()}%`;
-  
   return await prisma.legoSet.findMany({
     where: {
       OR: [
-        { setNumber: { contains: query.trim(), mode: 'insensitive' } },
-        { name: { contains: searchTerm, mode: 'insensitive' } },
-        { theme: { contains: searchTerm, mode: 'insensitive' } },
+        { setNumber: { contains: term, mode: 'insensitive' } },
+        { name: { contains: term, mode: 'insensitive' } },
+        { theme: { contains: term, mode: 'insensitive' } },
       ],
     },
     take: 50,
@@ -62,17 +68,16 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         </div>
 
         {/* Results */}
-        {query && (
-          <div>
-            <h2 className="text-2xl font-semibold mb-4">
-              搜索结果: {query} ({results.length} 个结果)
-            </h2>
+        <div>
+          <h2 className="text-2xl font-semibold mb-4">
+            {query.trim() ? `搜索结果: ${query} (${results.length} 个)` : `最近录入 (${results.length} 个)`}
+          </h2>
 
-            {results.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-500 text-lg">未找到相关结果</p>
-              </div>
-            ) : (
+          {results.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500 text-lg">未找到相关结果，请换个关键词试试</p>
+            </div>
+          ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {results.map((set) => (
                   <Link
@@ -87,6 +92,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                           alt={set.name}
                           fill
                           className="object-cover"
+                          unoptimized={set.imageUrl.startsWith('/images/')}
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -109,8 +115,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                 ))}
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
