@@ -24,7 +24,7 @@ export default function PriceSection({ setNumber, initialLastPrice }: PriceSecti
         )}
       </div>
       <div className="flex-shrink-0">
-        <RefreshPriceButton setNumber={setNumber} onPriceUpdate={setDisplayPrice} />
+        <RefreshPriceButton setNumber={setNumber} onPriceUpdate={(n) => setDisplayPrice(n)} />
       </div>
     </div>
   );

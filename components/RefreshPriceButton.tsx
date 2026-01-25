@@ -11,18 +11,23 @@ interface Store {
 interface RefreshPriceButtonProps {
   setNumber: string;
   onStoresUpdate?: (stores: Store[]) => void;
+  onPriceUpdate?: (medianPrice: number) => void;
 }
 
-export default function RefreshPriceButton({ setNumber, onStoresUpdate }: RefreshPriceButtonProps) {
+export default function RefreshPriceButton({ setNumber, onStoresUpdate, onPriceUpdate }: RefreshPriceButtonProps) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [mockHint, setMockHint] = useState<string | null>(null);
 
   const handleRefresh = async () => {
     setLoading(true);
     setMessage(null);
+    setMockHint(null);
 
     try {
-      const response = await fetch(`/api/refresh-prices?setNumber=${setNumber}`, {
+      const apiKey = process.env.NEXT_PUBLIC_API_KEY || '';
+      const url = `/api/refresh-prices?setNumber=${encodeURIComponent(setNumber)}${apiKey ? `&key=${encodeURIComponent(apiKey)}` : ''}`;
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -33,24 +38,18 @@ export default function RefreshPriceButton({ setNumber, onStoresUpdate }: Refres
 
       if (response.ok) {
         setMessage(`价格已更新: ¥${data.medianPrice?.toFixed(2) || 'N/A'}`);
-        
-        // 如果有店铺数据，通知 StoreList 组件更新
+        if (data.source === 'mock' && data.mockReason) {
+          setMockHint(data.mockReason);
+        }
+        if (typeof data.medianPrice === 'number' && onPriceUpdate) {
+          onPriceUpdate(data.medianPrice);
+        }
+        // 如果有店铺数据，通知 StoreList 更新（不再 reload，避免店铺列表被清空）
         if (data.stores && Array.isArray(data.stores) && data.stores.length > 0) {
           const updateFn = (window as any)[`updateStores_${setNumber}`];
-          if (updateFn) {
-            updateFn(data.stores);
-          }
+          if (updateFn) updateFn(data.stores);
+          if (onStoresUpdate) onStoresUpdate(data.stores);
         }
-        
-        // 如果有回调函数，也调用它
-        if (data.stores && onStoresUpdate) {
-          onStoresUpdate(data.stores);
-        }
-        
-        // 刷新页面以显示新数据
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
       } else {
         setMessage(data.error || '更新失败');
       }
@@ -90,6 +89,11 @@ export default function RefreshPriceButton({ setNumber, onStoresUpdate }: Refres
       {message && (
         <p className={`mt-2 text-xs sm:text-sm text-center sm:text-left ${message.includes('失败') || message.includes('错误') ? 'text-red-600' : 'text-green-600'}`}>
           {message}
+        </p>
+      )}
+      {mockHint && (
+        <p className="mt-1 text-xs text-amber-600 text-center sm:text-left max-w-md">
+          ⚠ 当前为模拟数据。{mockHint}
         </p>
       )}
     </div>
