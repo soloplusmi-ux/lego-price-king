@@ -1,46 +1,123 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
-import { PriceHistoryPoint, parsePriceHistory } from '@/lib/priceHistory';
+import { PrismaClient } from '@prisma/client';
+import { parsePriceHistory } from '@/lib/priceHistory';
+import { createHash } from 'crypto';
 
 const prisma = new PrismaClient();
 
+/** 中国时区 yyyy-MM-dd HH:mm:ss */
+function getChinaTimestamp(): string {
+  const d = new Date();
+  const utc = d.getTime() + d.getTimezoneOffset() * 60 * 1000;
+  const china = new Date(utc + 8 * 60 * 60 * 1000);
+  const pad = (n: number) => (n < 10 ? '0' + n : String(n));
+  return `${china.getFullYear()}-${pad(china.getMonth() + 1)}-${pad(china.getDate())} ${pad(china.getHours())}:${pad(china.getMinutes())}:${pad(china.getSeconds())}`;
+}
+
+/** 淘宝开放平台 MD5 签名：params 按 key 升序，key+value 无符号拼接，md5(secret+str+secret) 转大写 */
+function signTaobao(params: Record<string, string>, appSecret: string): string {
+  const sorted = Object.keys(params).sort();
+  const str = sorted.map((k) => `${k}${params[k]}`).join('');
+  return createHash('md5').update(appSecret + str + appSecret, 'utf8').digest('hex').toUpperCase();
+}
+
 /**
- * 从淘宝联盟 API 获取价格
- * 注意: 这里需要根据实际的淘宝联盟 API 文档实现
+ * 调用淘宝客物料搜索 taobao.tbk.dg.material.optional，返回价格与店铺；失败或未配置则回退模拟数据。
+ * 接入说明见 TAOBAO_SETUP_GUIDE.md
  */
-async function fetchTaobaoPrices(setNumber: string): Promise<{
+async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Promise<{
   prices: number[];
   stores: Array<{ shopName: string; price: number; affiliateLink: string }>;
 }> {
-  // TODO: 实现淘宝联盟 API 调用
-  // 这里是一个示例实现，需要根据实际 API 文档修改
-  
-  const appKey = process.env.TAOBAO_APP_KEY;
-  const appSecret = process.env.TAOBAO_APP_SECRET;
-  const adzoneId = process.env.TAOBAO_ADZONE_ID;
-
-  if (!appKey || !appSecret || !adzoneId) {
-    throw new Error('淘宝联盟 API 配置不完整');
+  const appKey = process.env.TAOBAO_APP_KEY?.trim();
+  const appSecret = process.env.TAOBAO_APP_SECRET?.trim();
+  let adzoneId = process.env.TAOBAO_ADZONE_ID?.trim() || '';
+  // 若填的是完整 PID（如 mm_91078544_3390750117_116222400266），只取最后一段数字作为 adzone_id
+  if (adzoneId && adzoneId.includes('_')) {
+    const last = adzoneId.split('_').pop() || '';
+    if (/^\d+$/.test(last)) adzoneId = last;
   }
 
-  // 示例: 调用淘宝联盟 API
-  // const response = await fetch('https://eco.taobao.com/router/rest', {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({
-  //     method: 'taobao.tbk.item.get',
-  //     app_key: appKey,
-  //     // ... 其他参数
-  //   }),
-  // });
+  // 淘宝搜索时去掉编号末尾的 -1，否则搜不到（如 10246-1 → 乐高 10246）
+  const setForSearch = setNumber.replace(/-1$/, '');
+  const keyword = `乐高 ${setForSearch} ${(setName || '').trim()}`.trim() || `乐高 ${setForSearch}`;
+  const searchUrl = `https://s.taobao.com/search?q=${encodeURIComponent(keyword)}`;
 
-  // 临时返回模拟数据
+  if (appKey && appSecret && adzoneId) {
+    try {
+      const params: Record<string, string> = {
+        method: 'taobao.tbk.dg.material.optional',
+        app_key: appKey,
+        timestamp: getChinaTimestamp(),
+        format: 'json',
+        v: '2.0',
+        sign_method: 'md5',
+        adzone_id: adzoneId,
+        q: keyword,
+        page_size: '20',
+        page_no: '1',
+      };
+      params.sign = signTaobao(params, appSecret);
+
+      const res = await fetch('https://eco.taobao.com/router/rest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        body: new URLSearchParams(params).toString(),
+      });
+      const json = (await res.json()) as Record<string, unknown>;
+
+      const err = json.error_response as { code?: number; sub_msg?: string } | undefined;
+      if (err?.code) {
+        console.warn('淘宝客物料 API 返回错误:', err.code, err.sub_msg);
+        return getMockStores(setNumber, keyword, searchUrl);
+      }
+
+      const resp = json.tbk_dg_material_optional_response as Record<string, unknown> | undefined;
+      const list = resp?.result_list as { map_data?: Array<Record<string, unknown>> } | undefined;
+      const items = list?.map_data;
+
+      if (Array.isArray(items) && items.length > 0) {
+        const prices: number[] = [];
+        const stores: Array<{ shopName: string; price: number; affiliateLink: string }> = [];
+        for (const it of items) {
+          const p = parseFloat(String(it.zk_final_price || it.zk_final_price_wap || it.reserve_price || 0));
+          if (p > 0) prices.push(p);
+          const link = String(it.coupon_click_url || it.click_url || '');
+          const shop = String(it.shop_title || it.title || '未知店铺').slice(0, 60);
+          if (link) {
+            stores.push({
+              shopName: shop,
+              price: p > 0 ? p : parseFloat(String(it.reserve_price || 0)) || 0,
+              affiliateLink: link,
+            });
+          }
+        }
+        if (prices.length > 0 || stores.length > 0) {
+          return {
+            prices: prices.length > 0 ? prices : [300],
+            stores: stores.length > 0 ? stores : getMockStores(setNumber, keyword, searchUrl).stores,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('淘宝客物料 API 请求异常:', e);
+    }
+  }
+
+  return getMockStores(setNumber, keyword, searchUrl);
+}
+
+function getMockStores(
+  setNumber: string,
+  keyword: string,
+  searchUrl: string
+): { prices: number[]; stores: Array<{ shopName: string; price: number; affiliateLink: string }> } {
   return {
     prices: [299, 305, 310, 295, 320, 298, 315, 302, 308, 300, 312, 304, 307, 301, 309],
     stores: Array.from({ length: 15 }, (_, i) => ({
-      shopName: `店铺 ${i + 1}`,
+      shopName: `示例店铺 ${i + 1}（接入淘宝联盟 API 后显示真实店铺）`,
       price: 300 + Math.random() * 20,
-      affiliateLink: `https://example.com/product/${setNumber}?shop=${i + 1}`,
+      affiliateLink: searchUrl,
     })),
   };
 }
@@ -96,8 +173,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 从淘宝获取价格
-    const { prices, stores } = await fetchTaobaoPrices(setNumber);
+    // 从淘宝获取价格（传入套装名称便于搜索）
+    const { prices, stores } = await fetchTaobaoPrices(setNumber, legoSet.name);
     
     if (prices.length === 0) {
       return NextResponse.json(
