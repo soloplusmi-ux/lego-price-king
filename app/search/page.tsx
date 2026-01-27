@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client';
 import Link from 'next/link';
 import Image from 'next/image';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // 避免搜索页被缓存，确保每次都查库
 export const dynamic = 'force-dynamic';
@@ -12,33 +10,40 @@ interface SearchPageProps {
 }
 
 async function getSearchResults(query: string) {
-  const term = (query || '').trim();
-  if (term === '') {
-    // 无关键词时：返回最近录入的 24 条，便于确认有数据
-    return await prisma.legoSet.findMany({
-      take: 24,
-      orderBy: { createdAt: 'desc' },
-    });
-  }
+  try {
+    const term = (query || '').trim();
+    if (term === '') {
+      // 无关键词时：返回最近录入的 24 条，便于确认有数据
+      return await prisma.legoSet.findMany({
+        take: 24,
+        orderBy: { createdAt: 'desc' },
+      });
+    }
 
-  return await prisma.legoSet.findMany({
-    where: {
-      OR: [
-        { setNumber: { contains: term, mode: 'insensitive' } },
-        { name: { contains: term, mode: 'insensitive' } },
-        { theme: { contains: term, mode: 'insensitive' } },
-      ],
-    },
-    take: 50,
-    orderBy: { year: 'desc' },
-  });
+    return await prisma.legoSet.findMany({
+      where: {
+        OR: [
+          { setNumber: { contains: term, mode: 'insensitive' } },
+          { name: { contains: term, mode: 'insensitive' } },
+          { theme: { contains: term, mode: 'insensitive' } },
+        ],
+      },
+      take: 50,
+      orderBy: { year: 'desc' },
+    });
+  } catch (error) {
+    console.error('搜索查询失败:', error);
+    // 返回空数组，避免页面崩溃
+    return [];
+  }
 }
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
-  const query = searchParams.q || '';
-  const results = await getSearchResults(query);
+  try {
+    const query = (searchParams?.q ?? '').trim();
+    const results = await getSearchResults(query);
 
-  return (
+    return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
@@ -118,5 +123,23 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         </div>
       </div>
     </div>
-  );
+    );
+  } catch (error) {
+    console.error('搜索页面渲染失败:', error);
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="container mx-auto px-4 py-8">
+          <header className="mb-8">
+            <Link href="/" className="text-3xl font-bold text-blue-600 hover:text-blue-700">
+              乐高比价王
+            </Link>
+          </header>
+          <div className="text-center py-12">
+            <p className="text-red-600 text-lg mb-4">搜索功能暂时不可用，请稍后重试</p>
+            <Link href="/" className="text-blue-600 hover:underline">返回首页</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 }

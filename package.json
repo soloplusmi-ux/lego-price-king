@@ -11,7 +11,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "import:excel": "node scripts/sync_custom_excel.js"
   },
   "dependencies": {
     "@prisma/client": "^5.7.1",

@@ -1,11 +1,12 @@
 services:
   # PostgreSQL 数据库
+  # 密码统一用 POSTGRES_PASSWORD；若需修改，在下方或 .env 中改一处即可
   postgres:
     image: postgres:15-alpine
     container_name: lego_price_king_db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: lego_price_king
     ports:
       # 暴露端口以便本地脚本连接
@@ -29,20 +30,27 @@ services:
       dockerfile: Dockerfile
     container_name: lego_price_king_app
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/lego_price_king?schema=public"
+      # 与 postgres 服务共用 POSTGRES_PASSWORD，默认 postgres
+      # 注意：如果 .env 中设置了 POSTGRES_PASSWORD，这里会自动使用；否则使用默认值 postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/lego_price_king?schema=public"
       NODE_ENV: production
       # 从 .env 文件读取其他配置
     env_file:
       - .env
     ports:
       - "3000:3000"
+    volumes:
+      # 挂载 public/images，便于在服务器上直接放置以「编号」命名的图片（如 10264-1.jpg）
+      - ./public/images:/app/public/images
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - lego_network
     restart: unless-stopped
-    command: sh -c "cd /app && npx prisma generate --schema=./prisma/schema.prisma && node server.js"
+    # 启动时先等待数据库就绪，再生成 Prisma Client 并启动应用
+    command: sh -c "echo '等待数据库就绪...' && sleep 2 && cd /app && npx prisma generate --schema=./prisma/schema.prisma && echo 'Prisma Client 生成完成，启动应用...' && node server.js"
 
 volumes:
   postgres_data:

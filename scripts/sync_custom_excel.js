@@ -222,16 +222,15 @@ async function processRecord(record, index, total) {
         record['last_price'] ||
         null
       ) ? parseFloat(record.lastPrice || record['淘宝售价中位数'] || record['最近价格'] || record['Last Price'] || record['last_price'] || 0) : null,
-      priceHistory: (
-        record.priceHistory || 
-        record['图表'] || 
-        record['Price History'] ||
-        record['price_history'] ||
-        null
-      ) ? (typeof (record.priceHistory || record['图表'] || record['Price History'] || record['price_history']) === 'string' 
-        ? JSON.parse(record.priceHistory || record['图表'] || record['Price History'] || record['price_history'])
-        : (record.priceHistory || record['图表'] || record['Price History'] || record['price_history'])
-      ) : null,
+      priceHistory: (function () {
+        const raw = record.priceHistory || record['图表'] || record['Price History'] || record['price_history'];
+        if (raw == null || raw === '') return null;
+        try {
+          const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (Array.isArray(arr) && arr.length > 0) return arr;
+          return null;
+        } catch (_) { return null; }
+      })(),
     };
     
     // 验证必填字段

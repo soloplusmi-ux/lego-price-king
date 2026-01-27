@@ -1,24 +1,27 @@
-import { PrismaClient } from '@prisma/client';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
+import { prisma } from '@/lib/prisma';
 import PriceChart from '@/components/PriceChart';
 import StoreList from '@/components/StoreList';
 import PriceSection from '@/components/PriceSection';
 import { parsePriceHistory } from '@/lib/priceHistory';
 
-const prisma = new PrismaClient();
-
 async function getLegoSet(setNumber: string) {
-  const set = await prisma.legoSet.findUnique({
-    where: { setNumber },
-  });
+  try {
+    const set = await prisma.legoSet.findUnique({
+      where: { setNumber },
+    });
 
-  if (!set) {
+    if (!set) {
+      return null;
+    }
+
+    return set;
+  } catch (error) {
+    console.error('获取乐高套装失败:', error);
     return null;
   }
-
-  return set;
 }
 
 export default async function SetDetailPage({
@@ -26,13 +29,16 @@ export default async function SetDetailPage({
 }: {
   params: { setNumber: string };
 }) {
-  const set = await getLegoSet(params.setNumber);
+  try {
+    const setNumber = params?.setNumber;
+    if (!setNumber) notFound();
+    const set = await getLegoSet(setNumber);
 
-  if (!set) {
-    notFound();
-  }
+    if (!set) {
+      notFound();
+    }
 
-  const priceHistory = parsePriceHistory(set.priceHistory);
+    const priceHistory = parsePriceHistory(set.priceHistory);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -143,5 +149,23 @@ export default async function SetDetailPage({
         </div>
       </div>
     </div>
-  );
+    );
+  } catch (error) {
+    console.error('套装详情页渲染失败:', error);
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="container mx-auto px-4 py-8">
+          <header className="mb-8">
+            <Link href="/" className="text-lg text-gray-600 hover:text-blue-600">
+              ← 返回首页
+            </Link>
+          </header>
+          <div className="text-center py-12">
+            <p className="text-red-600 text-lg mb-4">无法加载套装信息，请稍后重试</p>
+            <Link href="/" className="text-blue-600 hover:underline">返回首页</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 }
