@@ -33,7 +33,7 @@ services:
       # 与 postgres 服务共用 POSTGRES_PASSWORD，默认 postgres
       # 注意：如果 .env 中设置了 POSTGRES_PASSWORD，这里会自动使用；否则使用默认值 postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/lego_price_king?schema=public"
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/lego_price_king?schema=public&connection_limit=10&pool_timeout=20&connect_timeout=10"
       NODE_ENV: production
       # 从 .env 文件读取其他配置
     env_file:

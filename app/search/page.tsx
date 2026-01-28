@@ -9,28 +9,34 @@ interface SearchPageProps {
   searchParams: { q?: string };
 }
 
+import { withRetry } from '@/lib/prisma';
+
 async function getSearchResults(query: string) {
   try {
     const term = (query || '').trim();
     if (term === '') {
       // 无关键词时：返回最近录入的 24 条，便于确认有数据
-      return await prisma.legoSet.findMany({
-        take: 24,
-        orderBy: { createdAt: 'desc' },
-      });
+      return await withRetry(() =>
+        prisma.legoSet.findMany({
+          take: 24,
+          orderBy: { createdAt: 'desc' },
+        })
+      );
     }
 
-    return await prisma.legoSet.findMany({
-      where: {
-        OR: [
-          { setNumber: { contains: term, mode: 'insensitive' } },
-          { name: { contains: term, mode: 'insensitive' } },
-          { theme: { contains: term, mode: 'insensitive' } },
-        ],
-      },
-      take: 50,
-      orderBy: { year: 'desc' },
-    });
+    return await withRetry(() =>
+      prisma.legoSet.findMany({
+        where: {
+          OR: [
+            { setNumber: { contains: term, mode: 'insensitive' } },
+            { name: { contains: term, mode: 'insensitive' } },
+            { theme: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+        take: 50,
+        orderBy: { year: 'desc' },
+      })
+    );
   } catch (error) {
     console.error('搜索查询失败:', error);
     // 返回空数组，避免页面崩溃

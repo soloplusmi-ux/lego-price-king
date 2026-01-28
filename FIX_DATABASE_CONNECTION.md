@@ -138,3 +138,29 @@ docker volume ls | grep postgres_data
 1. **统一密码管理**：在 `.env` 中设置 `POSTGRES_PASSWORD`，docker-compose.yml 会自动使用
 2. **定期备份**：定期备份 `postgres_data` 数据卷
 3. **监控日志**：定期检查 `docker compose logs app` 和 `docker compose logs postgres`
+4. **密码同步**：如果修改了 `.env` 中的 `POSTGRES_PASSWORD`，必须同步修改数据库密码：
+   ```bash
+   docker exec -it lego_price_king_db psql -U postgres -c "ALTER USER postgres PASSWORD '新密码';"
+   docker compose restart app
+   ```
+
+## 快速修复命令（已验证有效）
+
+如果遇到数据库认证失败，执行以下命令快速修复：
+
+```bash
+cd /opt/lego-price-king
+
+# 1. 重置数据库密码为默认值 postgres（与 docker-compose.yml 默认值一致）
+docker exec -it lego_price_king_db psql -U postgres -c "ALTER USER postgres PASSWORD 'postgres';"
+
+# 2. 确保 .env 中不设置 POSTGRES_PASSWORD，或设置为 postgres
+# 如果 .env 中有 POSTGRES_PASSWORD，确保值为 postgres
+# 或者删除该行，让 docker-compose.yml 使用默认值
+
+# 3. 重启应用
+docker compose restart app
+
+# 4. 验证连接
+docker compose exec app node -e "const { PrismaClient } = require('@prisma/client'); const p = new PrismaClient(); p.\$connect().then(() => { console.log('✅ 数据库连接成功'); p.\$disconnect(); }).catch(e => { console.error('❌ 连接失败:', e.message); process.exit(1); });"
+```

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma, withRetry } from '@/lib/prisma';
 import { parsePriceHistory } from '@/lib/priceHistory';
 import { createHash } from 'crypto';
 
@@ -174,10 +174,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 获取乐高套装信息
-    const legoSet = await prisma.legoSet.findUnique({
-      where: { setNumber },
-    });
+    // 获取乐高套装信息（使用重试机制）
+    const legoSet = await withRetry(() =>
+      prisma.legoSet.findUnique({
+        where: { setNumber },
+      })
+    );
 
     if (!legoSet) {
       return NextResponse.json(
@@ -209,13 +211,16 @@ export async function POST(request: NextRequest) {
       price: medianPrice,
     });
 
-    await prisma.legoSet.update({
-      where: { setNumber },
-      data: {
-        lastPrice: medianPrice,
-        priceHistory: priceHistory as any,
-      },
-    });
+    // 更新数据库（使用重试机制）
+    await withRetry(() =>
+      prisma.legoSet.update({
+        where: { setNumber },
+        data: {
+          lastPrice: medianPrice,
+          priceHistory: priceHistory as any,
+        },
+      })
+    );
 
     // 返回 Top 15 店铺
     const topStores = stores

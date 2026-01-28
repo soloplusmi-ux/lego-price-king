@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { prisma } from '@/lib/prisma';
+import { prisma, withRetry } from '@/lib/prisma';
 import PriceChart from '@/components/PriceChart';
 import StoreList from '@/components/StoreList';
 import PriceSection from '@/components/PriceSection';
@@ -9,9 +9,11 @@ import { parsePriceHistory } from '@/lib/priceHistory';
 
 async function getLegoSet(setNumber: string) {
   try {
-    const set = await prisma.legoSet.findUnique({
-      where: { setNumber },
-    });
+    const set = await withRetry(() =>
+      prisma.legoSet.findUnique({
+        where: { setNumber },
+      })
+    );
 
     if (!set) {
       return null;
