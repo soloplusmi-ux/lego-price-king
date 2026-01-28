@@ -39,23 +39,33 @@ if (!globalForPrisma.prisma) {
   globalForPrisma.prisma = prisma;
 }
 
-// 连接健康检查和自动重连
-async function ensureConnection() {
+// 判断是否为连接相关错误
+function isConnectionError(error: any): boolean {
+  return (
+    error?.code === 'P1001' || // 无法连接到数据库服务器
+    error?.code === 'P1008' || // 操作超时
+    error?.code === 'P1017' || // 服务器关闭了连接
+    error?.code === 'P1010' || // 用户、密码或数据库名无效
+    error?.message?.includes('connection') ||
+    error?.message?.includes('timeout') ||
+    error?.message?.includes('Authentication failed') ||
+    error?.message?.includes('ECONNREFUSED') ||
+    error?.message?.includes('connect ECONNREFUSED')
+  );
+}
+
+// 尝试重连数据库
+async function reconnectDatabase(): Promise<void> {
   try {
-    // 尝试执行一个简单查询来检查连接
-    await prisma.$queryRaw`SELECT 1`;
-  } catch (error) {
-    console.error('数据库连接检查失败，尝试重连:', error);
-    try {
-      // 断开旧连接
-      await prisma.$disconnect();
-      // 重新连接
-      await prisma.$connect();
-      console.log('✅ 数据库重连成功');
-    } catch (reconnectError) {
-      console.error('❌ 数据库重连失败:', reconnectError);
-      throw reconnectError;
-    }
+    console.log('尝试重连数据库...');
+    // 断开旧连接（忽略错误）
+    await prisma.$disconnect().catch(() => {});
+    // 重新连接
+    await prisma.$connect();
+    console.log('✅ 数据库重连成功');
+  } catch (reconnectError: any) {
+    console.error('❌ 数据库重连失败:', reconnectError?.message || reconnectError);
+    throw reconnectError;
   }
 }
 
@@ -68,26 +78,29 @@ export async function withRetry<T>(
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // 每次查询前确保连接正常
-      await ensureConnection();
+      // 直接执行查询，如果失败再处理
       return await queryFn();
     } catch (error: any) {
       lastError = error;
       
-      // 如果是连接相关错误，尝试重连
-      if (
-        error?.code === 'P1001' || // 无法连接到数据库服务器
-        error?.code === 'P1008' || // 操作超时
-        error?.code === 'P1017' || // 服务器关闭了连接
-        error?.message?.includes('connection') ||
-        error?.message?.includes('timeout')
-      ) {
-        console.warn(`数据库连接错误 (尝试 ${attempt + 1}/${maxRetries + 1}):`, error.message);
+      // 如果是连接相关错误，尝试重连后重试
+      if (isConnectionError(error)) {
+        console.warn(`数据库连接错误 (尝试 ${attempt + 1}/${maxRetries + 1}):`, error.message || error.code);
         
         if (attempt < maxRetries) {
-          // 等待后重试
-          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-          continue;
+          try {
+            // 尝试重连
+            await reconnectDatabase();
+            // 等待后重试
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            continue;
+          } catch (reconnectError) {
+            // 重连失败，继续重试循环
+            if (attempt < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+              continue;
+            }
+          }
         }
       }
       

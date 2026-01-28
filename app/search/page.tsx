@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
-import { prisma } from '@/lib/prisma';
+import { prisma, withRetry } from '@/lib/prisma';
 
 // 避免搜索页被缓存，确保每次都查库
 export const dynamic = 'force-dynamic';
@@ -8,8 +8,6 @@ export const dynamic = 'force-dynamic';
 interface SearchPageProps {
   searchParams: { q?: string };
 }
-
-import { withRetry } from '@/lib/prisma';
 
 async function getSearchResults(query: string) {
   try {
