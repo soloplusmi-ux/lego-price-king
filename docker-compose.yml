@@ -49,8 +49,8 @@ services:
     networks:
       - lego_network
     restart: unless-stopped
-    # 启动时先等待数据库就绪，再生成 Prisma Client 并启动应用
-    command: sh -c "echo '等待数据库就绪...' && sleep 2 && cd /app && npx prisma generate --schema=./prisma/schema.prisma && echo 'Prisma Client 生成完成，启动应用...' && node server.js"
+    # 启动时先等待数据库就绪，再生成 Prisma Client，检查连接，然后启动应用
+    command: sh -c "echo '等待数据库就绪...' && sleep 3 && cd /app && npx prisma generate --schema=./prisma/schema.prisma && echo 'Prisma Client 生成完成' && node scripts/check-db-connection.js && echo '数据库连接检查通过，启动应用...' && node server.js"
 
 volumes:
   postgres_data:

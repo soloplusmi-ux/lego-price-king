@@ -2,24 +2,27 @@ import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  prismaPromise: Promise<PrismaClient> | undefined;
 };
 
 // 确保 DATABASE_URL 存在
-if (!process.env.DATABASE_URL) {
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
   console.error('❌ DATABASE_URL 环境变量未设置！请检查 .env 文件或 docker-compose.yml');
+  console.error('当前环境变量:', Object.keys(process.env).filter(k => k.includes('DATABASE') || k.includes('POSTGRES')).join(', '));
 }
 
 // 创建 Prisma 客户端，配置连接池和重试机制
 function createPrismaClient(): PrismaClient {
   // 解析 DATABASE_URL，添加连接池参数
-  const databaseUrl = process.env.DATABASE_URL || '';
+  const url = databaseUrl || '';
   
   // 如果 URL 中已有参数，追加；否则添加
-  const urlWithParams = databaseUrl.includes('?')
-    ? `${databaseUrl}&connection_limit=10&pool_timeout=20&connect_timeout=10`
-    : `${databaseUrl}?connection_limit=10&pool_timeout=20&connect_timeout=10`;
+  const urlWithParams = url.includes('?')
+    ? `${url}&connection_limit=10&pool_timeout=20&connect_timeout=10`
+    : `${url}?connection_limit=10&pool_timeout=20&connect_timeout=10`;
 
-  return new PrismaClient({
+  const client = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
     datasources: {
       db: {
@@ -29,14 +32,63 @@ function createPrismaClient(): PrismaClient {
     // 添加错误格式化，便于调试
     errorFormat: 'pretty',
   });
+
+  // 延迟连接：不立即连接，而是在首次使用时连接
+  // 这样可以避免在模块加载时就失败
+  return client;
 }
 
-export const prisma =
-  globalForPrisma.prisma ?? createPrismaClient();
+// 初始化 Prisma 客户端（延迟连接）
+function initPrisma(): PrismaClient {
+  if (globalForPrisma.prisma) {
+    return globalForPrisma.prisma;
+  }
 
-// 在所有环境中复用 Prisma 实例（包括生产环境），避免连接池耗尽
-if (!globalForPrisma.prisma) {
-  globalForPrisma.prisma = prisma;
+  const client = createPrismaClient();
+  globalForPrisma.prisma = client;
+  
+  return client;
+}
+
+export const prisma = initPrisma();
+
+// 确保连接的辅助函数
+let connectionPromise: Promise<void> | null = null;
+
+async function ensureConnected(): Promise<void> {
+  // 如果已经有连接检查在进行，等待它完成
+  if (connectionPromise) {
+    return connectionPromise;
+  }
+
+  connectionPromise = (async () => {
+    try {
+      // 尝试连接（Prisma 会在首次查询时自动连接，但我们可以显式连接）
+      await prisma.$connect();
+    } catch (error: any) {
+      console.error('❌ Prisma 连接失败:', {
+        code: error?.code,
+        message: error?.message,
+        meta: error?.meta,
+      });
+      
+      // 如果是连接错误，提供更详细的诊断信息
+      if (error?.code === 'P1001' || error?.message?.includes('connect')) {
+        console.error('数据库连接问题诊断:');
+        console.error('- DATABASE_URL:', databaseUrl ? '已设置' : '未设置');
+        console.error('- 数据库主机: postgres:5432');
+        console.error('- 请检查: 1) 数据库服务是否运行 2) 密码是否正确 3) 网络是否正常');
+      }
+      
+      throw error;
+    }
+  })();
+
+  try {
+    await connectionPromise;
+  } finally {
+    connectionPromise = null;
+  }
 }
 
 // 判断是否为连接相关错误
@@ -78,10 +130,30 @@ export async function withRetry<T>(
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // 直接执行查询，如果失败再处理
+      // 确保连接已建立
+      await ensureConnected();
+      
+      // 执行查询
       return await queryFn();
     } catch (error: any) {
       lastError = error;
+      
+      // 检查是否是 Prisma 初始化错误
+      if (error?.name === 'PrismaClientInitializationError' || error?.message?.includes('PrismaClient')) {
+        console.error(`❌ Prisma 客户端初始化错误 (尝试 ${attempt + 1}/${maxRetries + 1}):`, error.message);
+        
+        if (attempt < maxRetries) {
+          // 重置连接
+          try {
+            await prisma.$disconnect().catch(() => {});
+            // 等待后重试
+            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
+            continue;
+          } catch (resetError) {
+            console.error('重置连接失败:', resetError);
+          }
+        }
+      }
       
       // 如果是连接相关错误，尝试重连后重试
       if (isConnectionError(error)) {
