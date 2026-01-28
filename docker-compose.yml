@@ -15,7 +15,7 @@ services:
       # 持久化数据卷
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lego_price_king"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,8 +49,8 @@ services:
     networks:
       - lego_network
     restart: unless-stopped
-    # 启动时先等待数据库就绪，再生成 Prisma Client，检查连接，然后启动应用
-    command: sh -c "echo '等待数据库就绪...' && sleep 3 && cd /app && npx prisma generate --schema=./prisma/schema.prisma && echo 'Prisma Client 生成完成' && node scripts/check-db-connection.js && echo '数据库连接检查通过，启动应用...' && node server.js"
+    # 启动时先等待数据库就绪，初始化数据库，生成 Prisma Client，然后启动应用
+    command: sh -c "echo '等待数据库就绪...' && sleep 5 && cd /app && echo '检查数据库是否存在...' && PGPASSWORD=$${POSTGRES_PASSWORD:-postgres} psql -h postgres -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = 'lego_price_king'\" | grep -q 1 || PGPASSWORD=$${POSTGRES_PASSWORD:-postgres} psql -h postgres -U postgres -c \"CREATE DATABASE lego_price_king;\" && echo '✅ 数据库 lego_price_king 已确认存在' && npx prisma generate --schema=./prisma/schema.prisma && echo '✅ Prisma Client 生成完成' && npx prisma db push --accept-data-loss --skip-generate && echo '✅ 数据库表结构已同步' && echo '🚀 启动应用...' && node server.js"
 
 volumes:
   postgres_data:
