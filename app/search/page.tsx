@@ -10,31 +10,35 @@ interface SearchPageProps {
 }
 
 async function getSearchResults(query: string) {
-  const term = (query || '').trim();
-  if (term === '') {
-    // 无关键词时：返回最近录入的 24 条
-    return await withRetry(() =>
+  try {
+    const term = (query || '').trim();
+    if (term === '') {
+      const list = await withRetry(() =>
+        prisma.legoSet.findMany({
+          take: 24,
+          orderBy: { createdAt: 'desc' },
+        })
+      );
+      return { results: list, error: false };
+    }
+    const list = await withRetry(() =>
       prisma.legoSet.findMany({
-        take: 24,
-        orderBy: { createdAt: 'desc' },
+        where: {
+          OR: [
+            { setNumber: { contains: term, mode: 'insensitive' } },
+            { name: { contains: term, mode: 'insensitive' } },
+            { theme: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+        take: 50,
+        orderBy: { year: 'desc' },
       })
     );
+    return { results: list, error: false };
+  } catch (err) {
+    console.error('搜索查询失败:', err);
+    return { results: [], error: true };
   }
-
-  // 有关键词：按编号、名称、主题模糊搜索
-  return await withRetry(() =>
-    prisma.legoSet.findMany({
-      where: {
-        OR: [
-          { setNumber: { contains: term, mode: 'insensitive' } },
-          { name: { contains: term, mode: 'insensitive' } },
-          { theme: { contains: term, mode: 'insensitive' } },
-        ],
-      },
-      take: 50,
-      orderBy: { year: 'desc' },
-    })
-  );
 }
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
@@ -42,7 +46,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
     // 兼容 searchParams 为 undefined 或 q 为数组（多选）的情况
     const q = searchParams?.q;
     const query = (Array.isArray(q) ? q[0] : typeof q === 'string' ? q : '').trim();
-    const results = await getSearchResults(query);
+    const { results, error: searchError } = await getSearchResults(query);
 
     return (
     <div className="min-h-screen bg-gray-50">
@@ -81,12 +85,21 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
           {results.length === 0 ? (
             <div className="text-center py-12 space-y-3">
-              <p className="text-gray-500 text-lg">
-                {query ? `未找到包含「${query}」的结果，请换个关键词试试` : '暂无数据'}
-              </p>
-              <p className="text-gray-400 text-sm">
-                若尚未导入套装数据，请先在本地运行同步脚本导入 Excel 后再搜索。
-              </p>
+              {searchError ? (
+                <>
+                  <p className="text-red-600 text-lg">搜索功能暂时不可用（数据库连接异常），请稍后重试。</p>
+                  <p className="text-gray-400 text-sm">若持续出现，请在服务器执行：docker compose restart app</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-500 text-lg">
+                    {query ? `未找到包含「${query}」的结果，请换个关键词试试` : '暂无数据'}
+                  </p>
+                  <p className="text-gray-400 text-sm">
+                    若尚未导入套装数据，请先在本地运行同步脚本导入 Excel 后再搜索。
+                  </p>
+                </>
+              )}
             </div>
           ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
