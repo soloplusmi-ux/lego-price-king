@@ -17,10 +17,10 @@ function createPrismaClient(): PrismaClient {
   // 解析 DATABASE_URL，添加连接池参数
   const url = databaseUrl || '';
   
-  // 如果 URL 中已有参数，追加；否则添加
+  // 连接池稍小一点，减少长时间空闲后被服务端关闭的连接数；超时与重试由 withRetry 处理
   const urlWithParams = url.includes('?')
-    ? `${url}&connection_limit=10&pool_timeout=20&connect_timeout=10`
-    : `${url}?connection_limit=10&pool_timeout=20&connect_timeout=10`;
+    ? `${url}&connection_limit=5&pool_timeout=30&connect_timeout=15`
+    : `${url}?connection_limit=5&pool_timeout=30&connect_timeout=15`;
 
   const client = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
@@ -91,18 +91,34 @@ async function ensureConnected(): Promise<void> {
   }
 }
 
-// 判断是否为连接相关错误
+// 判断是否为连接相关错误（包括空闲连接被关闭、网络断开等）
 function isConnectionError(error: any): boolean {
+  const msg = (error?.message ?? '').toLowerCase();
+  const code = error?.code ?? '';
   return (
-    error?.code === 'P1001' || // 无法连接到数据库服务器
-    error?.code === 'P1008' || // 操作超时
-    error?.code === 'P1017' || // 服务器关闭了连接
-    error?.code === 'P1010' || // 用户、密码或数据库名无效
-    error?.message?.includes('connection') ||
-    error?.message?.includes('timeout') ||
-    error?.message?.includes('Authentication failed') ||
-    error?.message?.includes('ECONNREFUSED') ||
-    error?.message?.includes('connect ECONNREFUSED')
+    // Prisma 错误码
+    code === 'P1001' || // 无法连接到数据库服务器
+    code === 'P1008' || // 操作超时
+    code === 'P1017' || // 服务器关闭了连接
+    code === 'P1010' || // 用户、密码或数据库名无效
+    code === 'P1012' || // 连接字符串无效
+    // 常见连接/网络错误
+    msg.includes('connection') ||
+    msg.includes('timeout') ||
+    msg.includes('authentication failed') ||
+    msg.includes('econnrefused') ||
+    msg.includes('econnreset') ||
+    msg.includes('connection terminated') ||
+    msg.includes('connection closed') ||
+    msg.includes('connection refused') ||
+    msg.includes('socket hang up') ||
+    msg.includes('read econnreset') ||
+    msg.includes('write econnreset') ||
+    msg.includes('broken pipe') ||
+    msg.includes('prismaclient') ||
+    msg.includes('invalid `prisma.') ||
+    error?.name === 'PrismaClientInitializationError' ||
+    error?.name === 'PrismaClientKnownRequestError'
   );
 }
 
@@ -121,66 +137,47 @@ async function reconnectDatabase(): Promise<void> {
   }
 }
 
-// 包装 Prisma 查询，自动处理连接问题
+// 包装 Prisma 查询：空闲连接断开后自动重连，无需重建数据库或重新上传数据
 export async function withRetry<T>(
   queryFn: () => Promise<T>,
-  maxRetries = 2
+  maxRetries = 3
 ): Promise<T> {
   let lastError: unknown;
-  
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // 确保连接已建立
-      await ensureConnected();
-      
-      // 执行查询
+      // 执行查询（Prisma 会自动连接）
       return await queryFn();
     } catch (error: any) {
       lastError = error;
-      
-      // 检查是否是 Prisma 初始化错误
-      if (error?.name === 'PrismaClientInitializationError' || error?.message?.includes('PrismaClient')) {
-        console.error(`❌ Prisma 客户端初始化错误 (尝试 ${attempt + 1}/${maxRetries + 1}):`, error.message);
-        
+
+      // 任何可能是“连接断开/过期”的错误都先尝试断开再重试
+      if (isConnectionError(error)) {
+        console.warn(
+          `[DB] 连接异常 (${attempt + 1}/${maxRetries + 1})，尝试重连:`,
+          error?.message?.slice(0, 80) || error?.code
+        );
+
         if (attempt < maxRetries) {
-          // 重置连接
           try {
             await prisma.$disconnect().catch(() => {});
-            // 等待后重试
-            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
-            continue;
-          } catch (resetError) {
-            console.error('重置连接失败:', resetError);
-          }
-        }
-      }
-      
-      // 如果是连接相关错误，尝试重连后重试
-      if (isConnectionError(error)) {
-        console.warn(`数据库连接错误 (尝试 ${attempt + 1}/${maxRetries + 1}):`, error.message || error.code);
-        
-        if (attempt < maxRetries) {
-          try {
-            // 尝试重连
-            await reconnectDatabase();
-            // 等待后重试
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-            continue;
-          } catch (reconnectError) {
-            // 重连失败，继续重试循环
+            await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+            await prisma.$connect();
+            continue; // 重试 queryFn
+          } catch (reconnectErr: any) {
+            console.error('[DB] 重连失败:', reconnectErr?.message || reconnectErr);
             if (attempt < maxRetries) {
-              await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+              await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
               continue;
             }
           }
         }
       }
-      
-      // 非连接错误或重试次数用完，直接抛出
+
       throw error;
     }
   }
-  
+
   throw lastError;
 }
 
