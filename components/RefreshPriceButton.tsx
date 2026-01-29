@@ -92,9 +92,14 @@ export default function RefreshPriceButton({ setNumber, onStoresUpdate, onPriceU
         </p>
       )}
       {mockHint && (
-        <p className="mt-1 text-xs text-amber-600 text-center sm:text-left max-w-md">
-          ⚠ 当前为模拟数据。{mockHint}
-        </p>
+        <div className="mt-1 text-xs text-amber-600 text-center sm:text-left max-w-md space-y-1">
+          <p>⚠ 当前为模拟数据。{mockHint}</p>
+          {mockHint.includes('Insufficient isv permissions') || mockHint.includes('11 ') ? (
+            <p className="text-amber-700">
+              需在淘宝开放平台为应用申请「淘宝客-推广者-物料搜索」等 API 权限，通过审核后即可获取真实价格。详见项目内 TAOBAO_SETUP_GUIDE.md。
+            </p>
+          ) : null}
+        </div>
       )}
     </div>
   );

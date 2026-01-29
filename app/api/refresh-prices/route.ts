@@ -20,7 +20,10 @@ function signTaobao(params: Record<string, string>, appSecret: string): string {
 }
 
 /**
- * 调用淘宝客物料搜索 taobao.tbk.dg.material.optional，返回价格与店铺；失败或未配置则回退模拟数据。
+ * 淘宝价格与店铺获取（仅使用淘宝客接口，禁止商家接口）。
+ * - 禁止使用 taobao.item.get（商家接口）：普通开发者申请不到权限，会一直报 Code 11。
+ * - 必须使用淘宝客接口 taobao.tbk.item.info.get 获取商品价格。
+ * 流程：先用 taobao.tbk.dg.material.optional 物料搜索得到商品 num_iid，再调用 taobao.tbk.item.info.get 取价格与信息。
  * 接入说明见 TAOBAO_SETUP_GUIDE.md
  */
 async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Promise<{
@@ -54,8 +57,19 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
     return fallback('TAOBAO_APP_KEY、TAOBAO_APP_SECRET、TAOBAO_ADZONE_ID 未配置或为空。请在服务器 .env 中配置并重启 app（docker compose up -d）。详见 TAOBAO_SETUP_GUIDE.md');
   }
 
+  const doRequest = async (params: Record<string, string>) => {
+    params.sign = signTaobao(params, appSecret);
+    const res = await fetch('https://eco.taobao.com/router/rest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body: new URLSearchParams(params).toString(),
+    });
+    return (await res.json()) as Record<string, unknown>;
+  };
+
   try {
-    const params: Record<string, string> = {
+    // Step 1: 物料搜索（仅用于拿到商品 num_iid，不做取价）
+    const searchParams: Record<string, string> = {
       method: 'taobao.tbk.dg.material.optional',
       app_key: appKey,
       timestamp: getChinaTimestamp(),
@@ -67,54 +81,96 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
       page_size: '20',
       page_no: '1',
     };
-    params.sign = signTaobao(params, appSecret);
+    const searchJson = await doRequest(searchParams);
 
-    const res = await fetch('https://eco.taobao.com/router/rest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-      body: new URLSearchParams(params).toString(),
-    });
-    const json = (await res.json()) as Record<string, unknown>;
-
-    const err = json.error_response as { code?: number; sub_code?: string; sub_msg?: string; msg?: string } | undefined;
-    if (err?.code) {
-      // 错误 11 + scope ids：多为「当前 App Key 对应的应用」未获准物料搜索权限，或应用未上线
-      const detail = [err.msg, err.sub_code, err.sub_msg].filter(Boolean).join(' ');
-      // 用 console.error 并拼成单行，便于在 docker logs 中 grep 或直接看到完整 JSON
-      console.error('[淘宝价格] error_response: ' + JSON.stringify(json.error_response));
-      return fallback(`淘宝接口返回错误: ${err.code} ${detail || ''}`);
+    const searchErr = searchJson.error_response as { code?: number; msg?: string; sub_code?: string; sub_msg?: string } | undefined;
+    if (searchErr?.code) {
+      console.error('[淘宝价格] error_response: ' + JSON.stringify(searchJson.error_response));
+      return fallback(`淘宝接口返回错误: ${searchErr.code} ${[searchErr.msg, searchErr.sub_code, searchErr.sub_msg].filter(Boolean).join(' ')}`);
     }
 
-    const resp = json.tbk_dg_material_optional_response as Record<string, unknown> | undefined;
-    const list = resp?.result_list as { map_data?: Array<Record<string, unknown>> } | undefined;
-    const items = list?.map_data;
+    const searchResp = searchJson.tbk_dg_material_optional_response as Record<string, unknown> | undefined;
+    const searchList = searchResp?.result_list as { map_data?: Array<Record<string, unknown>> } | undefined;
+    const searchItems = searchList?.map_data;
 
-    if (Array.isArray(items) && items.length > 0) {
-      const prices: number[] = [];
-      const stores: Array<{ shopName: string; price: number; affiliateLink: string }> = [];
-      for (const it of items) {
-        const p = parseFloat(String(it.zk_final_price || it.zk_final_price_wap || it.reserve_price || 0));
-        if (p > 0) prices.push(p);
-        const link = String(it.coupon_click_url || it.click_url || '');
-        const shop = String(it.shop_title || it.title || '未知店铺').slice(0, 60);
-        if (link) {
-          stores.push({
-            shopName: shop,
-            price: p > 0 ? p : parseFloat(String(it.reserve_price || 0)) || 0,
-            affiliateLink: link,
-          });
-        }
-      }
-      if (prices.length > 0 || stores.length > 0) {
-        return {
-          prices: prices.length > 0 ? prices : [300],
-          stores: stores.length > 0 ? stores : getMockStores(setNumber, keyword, searchUrl).stores,
-          source: 'taobao',
+    if (!Array.isArray(searchItems) || searchItems.length === 0) {
+      return fallback('淘宝接口返回空结果');
+    }
+
+    // 从物料搜索结果中提取 num_iid（淘宝客商品 ID），供 taobao.tbk.item.info.get 使用
+    const numIids: string[] = [];
+    const materialByNumIid: Record<string, { shop_title?: string; coupon_click_url?: string; click_url?: string; title?: string }> = {};
+    for (const it of searchItems) {
+      const numIid = String(it.num_iid ?? it.item_id ?? '').trim();
+      if (numIid && !numIids.includes(numIid)) {
+        numIids.push(numIid);
+        materialByNumIid[numIid] = {
+          shop_title: it.shop_title != null ? String(it.shop_title) : undefined,
+          coupon_click_url: it.coupon_click_url != null ? String(it.coupon_click_url) : undefined,
+          click_url: it.click_url != null ? String(it.click_url) : undefined,
+          title: it.title != null ? String(it.title) : undefined,
         };
       }
     }
+    if (numIids.length === 0) {
+      return fallback('物料搜索未返回商品 ID');
+    }
 
-    return fallback('淘宝接口返回空结果');
+    // Step 2: 使用淘宝客接口 taobao.tbk.item.info.get 获取商品价格（禁止使用 taobao.item.get 商家接口）
+    const numIidsParam = numIids.slice(0, 20).join(',');
+    const infoParams: Record<string, string> = {
+      method: 'taobao.tbk.item.info.get',
+      app_key: appKey,
+      timestamp: getChinaTimestamp(),
+      format: 'json',
+      v: '2.0',
+      sign_method: 'md5',
+      num_iids: numIidsParam,
+      platform: '2',
+    };
+    const infoJson = await doRequest(infoParams);
+
+    const infoErr = infoJson.error_response as { code?: number; msg?: string; sub_code?: string; sub_msg?: string } | undefined;
+    if (infoErr?.code) {
+      console.error('[淘宝价格] tbk.item.info.get error_response: ' + JSON.stringify(infoJson.error_response));
+      return fallback(`淘宝客商品信息接口返回错误: ${infoErr.code} ${[infoErr.msg, infoErr.sub_code, infoErr.sub_msg].filter(Boolean).join(' ')}`);
+    }
+
+    const infoResp = infoJson.tbk_item_info_get_response as Record<string, unknown> | undefined;
+    const results = infoResp?.results;
+    const infoItems = Array.isArray(results)
+      ? results
+      : (results as { n_tbk_item?: Array<Record<string, unknown>> } | undefined)?.n_tbk_item;
+
+    if (!Array.isArray(infoItems) || infoItems.length === 0) {
+      return fallback('淘宝客商品信息接口返回空结果');
+    }
+
+    const prices: number[] = [];
+    const stores: Array<{ shopName: string; price: number; affiliateLink: string }> = [];
+    for (const it of infoItems) {
+      const numIid = String(it.num_iid ?? it.item_id ?? '');
+      const p = parseFloat(String(it.zk_final_price ?? it.reserve_price ?? it.price ?? 0));
+      if (p > 0) prices.push(p);
+      const mat = materialByNumIid[numIid];
+      const link = mat?.coupon_click_url || mat?.click_url || '';
+      const shop = (mat?.shop_title || mat?.title || it.title || '未知店铺').toString().slice(0, 60);
+      stores.push({
+        shopName: shop,
+        price: p > 0 ? p : parseFloat(String(it.reserve_price ?? it.price ?? 0)) || 0,
+        affiliateLink: link || searchUrl,
+      });
+    }
+
+    if (prices.length > 0 || stores.length > 0) {
+      return {
+        prices: prices.length > 0 ? prices : [300],
+        stores: stores.length > 0 ? stores : getMockStores(setNumber, keyword, searchUrl).stores,
+        source: 'taobao',
+      };
+    }
+
+    return fallback('淘宝客商品信息接口未解析到价格');
   } catch (e) {
     return fallback(`请求异常: ${e instanceof Error ? e.message : String(e)}`);
   }
