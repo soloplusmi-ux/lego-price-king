@@ -1,6 +1,9 @@
+# 数据库持久化说明：
+# - 数据卷使用固定名称 lego_price_king_postgres_data，重启/更新代码不会丢数据。
+# - 严禁使用 docker compose down -v（会删除数据卷，数据将全部丢失）。
+# - 正常更新：git pull && docker compose up -d --build 即可，数据会一直保留。
 services:
-  # PostgreSQL 数据库
-  # 密码统一用 POSTGRES_PASSWORD；若需修改，在下方或 .env 中改一处即可
+  # PostgreSQL 数据库（数据持久化在固定卷中，除非手动删除卷否则一直保留）
   postgres:
     image: postgres:15-alpine
     container_name: lego_price_king_db
@@ -9,16 +12,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: lego_price_king
     ports:
-      # 暴露端口以便本地脚本连接
       - "5432:5432"
     volumes:
-      # 持久化数据卷
       - postgres_data:/var/lib/postgresql/data
+    # 只检查 Postgres 是否就绪，不依赖 lego_price_king 库存在（库由 app 启动时创建，避免死锁）
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d lego_price_king"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     networks:
       - lego_network
     restart: unless-stopped
@@ -49,11 +52,13 @@ services:
     networks:
       - lego_network
     restart: unless-stopped
-    # 启动时先等待数据库就绪，初始化数据库，生成 Prisma Client，然后启动应用
-    command: sh -c "echo '等待数据库就绪...' && sleep 5 && cd /app && echo '检查数据库是否存在...' && PGPASSWORD=$${POSTGRES_PASSWORD:-postgres} psql -h postgres -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = 'lego_price_king'\" | grep -q 1 || PGPASSWORD=$${POSTGRES_PASSWORD:-postgres} psql -h postgres -U postgres -c \"CREATE DATABASE lego_price_king;\" && echo '✅ 数据库 lego_price_king 已确认存在' && npx prisma generate --schema=./prisma/schema.prisma && echo '✅ Prisma Client 生成完成' && npx prisma db push --accept-data-loss --skip-generate && echo '✅ 数据库表结构已同步' && echo '🚀 启动应用...' && node server.js"
+    # 启动时先等待数据库就绪，创建库（若不存在），生成 Prisma Client，然后启动应用
+    command: sh -c "echo '等待数据库就绪...' && sleep 5 && cd /app && echo '创建/确认数据库 lego_price_king...' && (PGPASSWORD=$${POSTGRES_PASSWORD:-postgres} psql -h postgres -U postgres -d postgres -c \"CREATE DATABASE lego_price_king;\" 2>/dev/null || true) && echo '✅ 数据库 lego_price_king 已确认存在' && npx prisma generate --schema=./prisma/schema.prisma && echo '✅ Prisma Client 生成完成' && npx prisma db push --accept-data-loss --skip-generate && echo '✅ 数据库表结构已同步' && echo '🚀 启动应用...' && node server.js"
 
 volumes:
+  # 固定卷名：无论从哪个目录/项目名启动，都用同一卷，数据一劳永逸
   postgres_data:
+    name: lego_price_king_postgres_data
     driver: local
 
 networks:

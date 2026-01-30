@@ -12,18 +12,21 @@ function getChinaTimestamp(): string {
   return `${china.getFullYear()}-${pad(china.getMonth() + 1)}-${pad(china.getDate())} ${pad(china.getHours())}:${pad(china.getMinutes())}:${pad(china.getSeconds())}`;
 }
 
-/** 淘宝开放平台 MD5 签名：params 按 key 升序，key+value 无符号拼接，md5(secret+str+secret) 转大写 */
+/**
+ * TOP 开放平台 MD5 签名（文档：API调用方法详解）。
+ * 1）参数按名称 ASCII 升序；2）拼装为 key+value 无分隔；3）md5(secret+str+secret) UTF-8；4）十六进制大写 32 位。
+ */
 function signTaobao(params: Record<string, string>, appSecret: string): string {
-  const sorted = Object.keys(params).sort();
-  const str = sorted.map((k) => `${k}${params[k]}`).join('');
+  const keys = Object.keys(params).filter((k) => k !== 'sign').sort();
+  const str = keys.map((k) => `${k}${params[k]}`).join('');
   return createHash('md5').update(appSecret + str + appSecret, 'utf8').digest('hex').toUpperCase();
 }
 
 /**
- * 淘宝价格与店铺获取（仅使用淘宝客接口，禁止商家接口）。
- * - 禁止使用 taobao.item.get（商家接口）：普通开发者申请不到权限，会一直报 Code 11。
- * - 必须使用淘宝客接口 taobao.tbk.item.info.get 获取商品价格。
- * 流程：先用 taobao.tbk.dg.material.optional 物料搜索得到商品 num_iid，再调用 taobao.tbk.item.info.get 取价格与信息。
+ * 淘宝价格与店铺获取（仅使用淘宝联盟/淘宝客接口，按官方文档实现）。
+ * - 服务地址（TOP-SDK 使用说明·四）：正式环境 HTTPS https://eco.taobao.com/router/rest，海外 https://api.taobao.com/router/rest；format=json 减少传输量。
+ * - tbk.dg.material.optional（物料搜索）：adzone_id 必选，q/cat 不能都为空，响应 result_list.map_data；链接 coupon_share_url、url；商品 ID 用 item_id。
+ * - tbk.item.info.get（商品详情）：num_iids 必选最大 40，响应 tbk_item_info_get_response.results.n_tbk_item；价格 zk_final_price/reserve_price，店铺 nick。
  * 接入说明见 TAOBAO_SETUP_GUIDE.md
  */
 async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Promise<{
@@ -57,18 +60,28 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
     return fallback('TAOBAO_APP_KEY、TAOBAO_APP_SECRET、TAOBAO_ADZONE_ID 未配置或为空。请在服务器 .env 中配置并重启 app（docker compose up -d）。详见 TAOBAO_SETUP_GUIDE.md');
   }
 
+  // TOP-SDK 使用说明·四、服务地址：正式环境 HTTPS https://eco.taobao.com/router/rest，海外 https://api.taobao.com/router/rest
+  const TOP_GATEWAY = 'https://eco.taobao.com/router/rest';
+  const TOP_TIMEOUT_MS = 15000; // 与 SDK 默认读超时接近，网络差时可适当增大
   const doRequest = async (params: Record<string, string>) => {
     params.sign = signTaobao(params, appSecret);
-    const res = await fetch('https://eco.taobao.com/router/rest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-      body: new URLSearchParams(params).toString(),
-    });
-    return (await res.json()) as Record<string, unknown>;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TOP_TIMEOUT_MS);
+    try {
+      const res = await fetch(TOP_GATEWAY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        body: new URLSearchParams(params).toString(),
+        signal: controller.signal,
+      });
+      return (await res.json()) as Record<string, unknown>;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   };
 
   try {
-    // Step 1: 物料搜索（仅用于拿到商品 num_iid，不做取价）
+    // Step 1: taobao.tbk.dg.material.optional 淘宝客-推广者-物料搜索（文档：adzone_id 必选，q/cat 不能都为空，响应 result_list.map_data）
     const searchParams: Record<string, string> = {
       method: 'taobao.tbk.dg.material.optional',
       app_key: appKey,
@@ -80,6 +93,7 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
       q: keyword,
       page_size: '20',
       page_no: '1',
+      platform: '2',
     };
     const searchJson = await doRequest(searchParams);
 
@@ -97,15 +111,18 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
       return fallback('淘宝接口返回空结果');
     }
 
-    // 从物料搜索结果中提取 num_iid（淘宝客商品 ID），供 taobao.tbk.item.info.get 使用
+    // 文档：商品 ID 用 item_id（num_iid 已废弃）；链接用 coupon_share_url(宝贝+券二合一)、url(宝贝推广链接)；店铺 shop_title、nick
     const numIids: string[] = [];
-    const materialByNumIid: Record<string, { shop_title?: string; coupon_click_url?: string; click_url?: string; title?: string }> = {};
+    const materialByNumIid: Record<string, { shop_title?: string; nick?: string; coupon_share_url?: string; url?: string; coupon_click_url?: string; click_url?: string; title?: string }> = {};
     for (const it of searchItems) {
-      const numIid = String(it.num_iid ?? it.item_id ?? '').trim();
+      const numIid = String(it.item_id ?? it.num_iid ?? '').trim();
       if (numIid && !numIids.includes(numIid)) {
         numIids.push(numIid);
         materialByNumIid[numIid] = {
           shop_title: it.shop_title != null ? String(it.shop_title) : undefined,
+          nick: it.nick != null ? String(it.nick) : undefined,
+          coupon_share_url: it.coupon_share_url != null ? String(it.coupon_share_url) : undefined,
+          url: it.url != null ? String(it.url) : undefined,
           coupon_click_url: it.coupon_click_url != null ? String(it.coupon_click_url) : undefined,
           click_url: it.click_url != null ? String(it.click_url) : undefined,
           title: it.title != null ? String(it.title) : undefined,
@@ -116,8 +133,8 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
       return fallback('物料搜索未返回商品 ID');
     }
 
-    // Step 2: 使用淘宝客接口 taobao.tbk.item.info.get 获取商品价格（禁止使用 taobao.item.get 商家接口）
-    const numIidsParam = numIids.slice(0, 20).join(',');
+    // Step 2: taobao.tbk.item.info.get 淘宝客商品详情查询(简版)，num_iids 最大 40 个（文档）
+    const numIidsParam = numIids.slice(0, 40).join(',');
     const infoParams: Record<string, string> = {
       method: 'taobao.tbk.item.info.get',
       app_key: appKey,
@@ -153,8 +170,8 @@ async function fetchTaobaoPrices(setNumber: string, setName?: string | null): Pr
       const p = parseFloat(String(it.zk_final_price ?? it.reserve_price ?? it.price ?? 0));
       if (p > 0) prices.push(p);
       const mat = materialByNumIid[numIid];
-      const link = mat?.coupon_click_url || mat?.click_url || '';
-      const shop = (mat?.shop_title || mat?.title || it.title || '未知店铺').toString().slice(0, 60);
+      const link = mat?.coupon_share_url || mat?.url || mat?.coupon_click_url || mat?.click_url || '';
+      const shop = (mat?.shop_title || mat?.nick || mat?.title || it.nick || it.title || '未知店铺').toString().slice(0, 60);
       stores.push({
         shopName: shop,
         price: p > 0 ? p : parseFloat(String(it.reserve_price ?? it.price ?? 0)) || 0,
