@@ -34,12 +34,11 @@ export function parsePriceHistory(jsonValue: Prisma.JsonValue | null): PriceHist
       const dateValue = (item as any).date;
       const priceValue = (item as any).price;
       
-      // 验证类型并转换
-      if (typeof dateValue === 'string' && typeof priceValue === 'number') {
-        result.push({
-          date: dateValue,
-          price: priceValue,
-        });
+      // 验证类型并转换（price 可能是 number 或 JSON 中的字符串如 "305.00"）
+      if (typeof dateValue !== 'string') continue;
+      const priceNum = typeof priceValue === 'number' ? priceValue : parseFloat(String(priceValue));
+      if (!Number.isNaN(priceNum)) {
+        result.push({ date: dateValue, price: priceNum });
       }
     }
   }
