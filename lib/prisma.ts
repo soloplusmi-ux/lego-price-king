@@ -12,29 +12,13 @@ if (!databaseUrl) {
   console.error('当前环境变量:', Object.keys(process.env).filter(k => k.includes('DATABASE') || k.includes('POSTGRES')).join(', '));
 }
 
-// 创建 Prisma 客户端，配置连接池和重试机制
+// 创建 Prisma 客户端
 function createPrismaClient(): PrismaClient {
-  // 解析 DATABASE_URL，添加连接池参数
-  const url = databaseUrl || '';
-  
-  // 连接池稍小一点，减少长时间空闲后被服务端关闭的连接数；超时与重试由 withRetry 处理
-  const urlWithParams = url.includes('?')
-    ? `${url}&connection_limit=5&pool_timeout=30&connect_timeout=15`
-    : `${url}?connection_limit=5&pool_timeout=30&connect_timeout=15`;
-
+  // 直接使用 DATABASE_URL，避免 URL 拼接导致解析错误（PrismaClientInitializationError）
   const client = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-    datasources: {
-      db: {
-        url: urlWithParams,
-      },
-    },
-    // 添加错误格式化，便于调试
     errorFormat: 'pretty',
   });
-
-  // 延迟连接：不立即连接，而是在首次使用时连接
-  // 这样可以避免在模块加载时就失败
   return client;
 }
 
@@ -137,7 +121,7 @@ async function reconnectDatabase(): Promise<void> {
   }
 }
 
-// 包装 Prisma 查询：空闲连接断开后自动重连，无需重建数据库或重新上传数据
+// 包装 Prisma 查询：显式连接 + 空闲断开后自动重连
 export async function withRetry<T>(
   queryFn: () => Promise<T>,
   maxRetries = 3
@@ -146,7 +130,8 @@ export async function withRetry<T>(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // 执行查询（Prisma 会自动连接）
+      // 显式建立连接，避免 PrismaClientInitializationError（Next.js standalone 下首次查询易触发）
+      await prisma.$connect();
       return await queryFn();
     } catch (error: any) {
       lastError = error;
