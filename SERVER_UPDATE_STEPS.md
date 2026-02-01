@@ -122,7 +122,7 @@ docker compose logs app --tail 30
 
 ---
 
-## 附录：可选清理脚本
+## 附录 A：可选清理脚本
 
 若希望用脚本统一清理：
 
@@ -133,6 +133,18 @@ sudo ./scripts/cleanup-mining-malware.sh
 ```
 
 然后再执行第五、六、七步。
+
+---
+
+## 附录 B：一键验证脚本（完成所有步骤后执行）
+
+```bash
+cd /opt/lego-price-king
+chmod +x scripts/verify-cleanup.sh
+./scripts/verify-cleanup.sh
+```
+
+脚本会检查：挖矿进程、可疑文件、容器内清理、代码版本、服务状态。若全部通过会提示「验证通过」。
 
 ---
 
